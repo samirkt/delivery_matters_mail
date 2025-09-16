@@ -5,10 +5,51 @@
   <title>Name Card Generator</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 1rem;
+      line-height: 1.4;
+      font-size: 16px; /* good base size for mobile */
+    }
+  
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+  
+    p {
+      margin-bottom: 1rem;
+    }
+  
+    input[type="file"],
+    button {
+      display: block;
+      width: 100%;
+      max-width: 300px;
+      margin: 0.5rem 0;
+      padding: 0.75rem;
+      font-size: 1rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+  
+    button {
+      background-color: #007acc;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+  
+    button:hover {
+      background-color: #005ea0;
+    }
+  </style>
 </head>
 <body>
   <h1>Apartment Name Card Generator</h1>
-  <body>To get started, click "Choose File" and select the file that you want to generate name cards from. The file must be a .csv file. Once you have selected a file, click "Generate PDF" and your PDF with name cards should be available in your downloads.</body>
+  <p>To get started, click "Choose File" and select the file that you want to generate name cards from. The file must be a .csv file. Once you have selected a file, click "Generate PDF" and your PDF with name cards should be available in your downloads.</p>
   <br>
   <br>
   <input type="file" id="csvFile" accept=".csv" />
