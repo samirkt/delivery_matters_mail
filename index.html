@@ -116,6 +116,30 @@
       return s;
     }
 
+    function normalizeHeaderName(name) {
+      return name.toLowerCase().replace(/[^a-z]/g, "");
+    }
+    
+    function findColumnMapping(headers) {
+      const mapping = {};
+      const normHeaders = headers.map(h => [h, normalizeHeaderName(h)]);
+    
+      function match(targets) {
+        for (const [orig, norm] of normHeaders) {
+          if (targets.some(t => norm.includes(t))) return orig;
+        }
+        return null;
+      }
+    
+      mapping.address = match(["address", "street"]);
+      mapping.unit = match(["unit", "apt", "apartment"]);
+      mapping.firstname = match(["firstname", "first"]);
+      mapping.lastname = match(["lastname", "last", "surname"]);
+    
+      return mapping;
+    }
+
+
     async function generatePDF() {
       const file = document.getElementById("csvFile").files[0];
       if (!file) { alert("Upload a CSV first!"); return; }
@@ -125,22 +149,23 @@
         skipEmptyLines: true,
         complete: async function(results) {
           const data = results.data;
-          const cols = {};
-          Object.keys(data[0]).forEach(c => { cols[c.toLowerCase().trim()] = c; });
-          if (!("address" in cols && "unit" in cols && "first name" in cols && "last name" in cols)) {
-            alert("Uh oh! Input file must have columns called 'Address', 'Unit', 'First Name', and 'Last Name'!\n\nColumns can be in any order. Extra columns with other names are OK.");
+          const headers = Object.keys(data[0]);
+          const cols = findColumnMapping(headers);
+          
+          if (!cols.address || !cols.unit || !cols.firstname || !cols.lastname) {
+            alert("Uh oh! CSV must have columns for address, unit, first name, last name (or similarly named).\n\nColumns can be in any order. Extra columns with other names are OK.");
             return;
           }
 
           // Group by (address, normalized unit)
           const groups = {};
           for (const row of data) {
-            const addr = (row[cols["address"]] || "").trim();
-            const aptNum = extractApartmentNumber(row[cols["unit"]] || "");
-            const first = normalizeNameCase(removeDupSuffix(row[cols["first name"]] || ""));
-            const last = normalizeNameCase(removeDupSuffix(row[cols["last name"]] || ""));
+            const addr = (row[cols.address] || "").trim();
+            const aptNum = extractApartmentNumber(row[cols.unit] || "");
+            const first = normalizeNameCase(removeDupSuffix(row[cols.firstname] || ""));
+            const last = normalizeNameCase(removeDupSuffix(row[cols.lastname] || ""));
             if (!first && !last) continue;
-
+          
             const name = last && first ? `${last}, ${first}` : (last || first);
             const key = `${addr}||${aptNum}`;
             if (!groups[key]) groups[key] = { addr, aptNum, names: new Set() };
