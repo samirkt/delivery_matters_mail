@@ -11,20 +11,11 @@
       font-family: Arial, sans-serif;
       margin: 1rem;
       line-height: 1.4;
-      font-size: 16px; /* good base size for mobile */
+      font-size: 16px;
     }
-  
-    h1 {
-      font-size: 1.5rem;
-      margin-bottom: 0.75rem;
-    }
-  
-    p {
-      margin-bottom: 1rem;
-    }
-  
-    input[type="file"],
-    button {
+    h1 { font-size: 1.5rem; margin-bottom: 0.75rem; }
+    p { margin-bottom: 1rem; }
+    input[type="file"], button {
       display: block;
       width: 100%;
       max-width: 300px;
@@ -34,24 +25,18 @@
       border-radius: 6px;
       border: 1px solid #ccc;
     }
-  
     button {
       background-color: #007acc;
       color: white;
       border: none;
       cursor: pointer;
     }
-  
-    button:hover {
-      background-color: #005ea0;
-    }
+    button:hover { background-color: #005ea0; }
   </style>
 </head>
 <body>
   <h1>Apartment Name Card Generator</h1>
-  <p>To get started, click "Choose File" and select the file that you want to generate name cards from. The file must be a .csv file. Once you have selected a file, click "Generate PDF" and your PDF with name cards should be available in your downloads.</p>
-  <br>
-  <br>
+  <p>To get started, click "Choose File" and select a .csv file. Once selected, click "Generate PDF" and your name cards will download.</p>
   <input type="file" id="csvFile" accept=".csv" />
   <button onclick="generatePDF()">Generate PDF</button>
 
@@ -79,10 +64,9 @@
 
     function extractApartmentNumber(unitStr) {
       if (!unitStr) return "";
-      const parts = unitStr.split("-");
+      const parts = String(unitStr).split("-");
       if (parts.length >= 2) {
-        const apt = parts[1];
-        return apt.replace(/\D/g, ""); // digits only
+        return parts[1].replace(/\D/g, "");
       }
       return unitStr.trim();
     }
@@ -103,61 +87,76 @@
     function removeDupSuffix(name) {
       if (!name) return "";
       let s = String(name);
-    
-      // 1) remove all digits
-      s = s.replace(/[0-9]/g, "");
-    
-      // 2) remove any trailing hyphen/apostrophe left by patterns like "-1" or "'2"
-      s = s.replace(/\s*[-']\s*$/g, "");
-    
-      // 3) collapse extra spaces and trim
-      s = s.replace(/\s{2,}/g, " ").trim();
-    
+      s = s.replace(/[0-9]/g, "");          // remove digits
+      s = s.replace(/\s*[-']\s*$/g, "");    // remove trailing - or '
+      s = s.replace(/\s{2,}/g, " ").trim(); // collapse spaces
       return s;
     }
 
     function normalizeHeaderName(name) {
       return name.toLowerCase().replace(/[^a-z]/g, "");
     }
-    
+
     function findColumnMapping(headers) {
       const mapping = {};
       const normHeaders = headers.map(h => [h, normalizeHeaderName(h)]);
-    
+
       function match(targets) {
         for (const [orig, norm] of normHeaders) {
-          if (targets.some(t => norm.includes(t))) return orig;
+          for (const t of targets) {
+            if (norm.includes(t) || t.includes(norm)) return orig;
+          }
         }
         return null;
       }
-    
+
       mapping.address = match(["address", "street"]);
       mapping.unit = match(["unit", "apt", "apartment"]);
-      mapping.firstname = match(["firstname", "first"]);
-      mapping.lastname = match(["lastname", "last", "surname"]);
-    
+      mapping.firstname = match(["firstname", "first", "given"]);
+      mapping.lastname = match(["lastname", "last", "surname", "family"]);
       return mapping;
     }
-
 
     async function generatePDF() {
       const file = document.getElementById("csvFile").files[0];
       if (!file) { alert("Upload a CSV first!"); return; }
 
       Papa.parse(file, {
-        header: true,
+        header: false,
         skipEmptyLines: true,
         complete: async function(results) {
-          const data = results.data;
-          const headers = Object.keys(data[0]);
+          let rows = results.data;
+          if (rows.length < 2) {
+            alert("CSV looks empty or malformed."); return;
+          }
+
+          // Detect header row
+          const firstRow = rows[0].map(x => String(x).toLowerCase());
+          const hasFirstName = firstRow.some(col => col.includes("first"));
+          let headers, dataRows;
+          if (hasFirstName) {
+            headers = rows[0];
+            dataRows = rows.slice(1);
+          } else {
+            headers = rows[1];
+            dataRows = rows.slice(2);
+          }
+
+          // Fuzzy match headers
           const cols = findColumnMapping(headers);
-          
           if (!cols.address || !cols.unit || !cols.firstname || !cols.lastname) {
-            alert("Uh oh! CSV must have columns for address, unit, first name, last name (or similarly named).\n\nColumns can be in any order. Extra columns with other names are OK.");
+            alert("CSV must have columns for address, unit, first name, last name (or close variants).");
             return;
           }
 
-          // Group by (address, normalized unit)
+          // Build row objects
+          const data = dataRows.map(r => {
+            const obj = {};
+            headers.forEach((h, i) => { obj[h] = r[i]; });
+            return obj;
+          });
+
+          // Group rows
           const groups = {};
           for (const row of data) {
             const addr = (row[cols.address] || "").trim();
@@ -165,14 +164,14 @@
             const first = normalizeNameCase(removeDupSuffix(row[cols.firstname] || ""));
             const last = normalizeNameCase(removeDupSuffix(row[cols.lastname] || ""));
             if (!first && !last) continue;
-          
+
             const name = last && first ? `${last}, ${first}` : (last || first);
             const key = `${addr}||${aptNum}`;
             if (!groups[key]) groups[key] = { addr, aptNum, names: new Set() };
             groups[key].names.add(name);
           }
 
-          // Build cards
+          // Build card list
           let cards = Object.values(groups).map(g => {
             const sortedNames = Array.from(g.names).sort((a,b) => {
               const [lastA] = a.split(",");
@@ -182,7 +181,7 @@
             return { addr: g.addr, aptNum: g.aptNum, names: sortedNames };
           });
 
-          // Sort cards by address, then apt num
+          // Sort cards
           cards.sort((a,b) => {
             const addrCmp = a.addr.toLowerCase().localeCompare(b.addr.toLowerCase());
             if (addrCmp !== 0) return addrCmp;
@@ -192,6 +191,7 @@
             return a.aptNum.localeCompare(b.aptNum);
           });
 
+          // Make PDF
           const { PDFDocument, StandardFonts } = PDFLib;
           const pdfDoc = await PDFDocument.create();
           const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -240,27 +240,29 @@
       const BODY_SIZE_MIN = 10;
       const LINE_SPACING = 1.15;
       const padding = 6;
-    
+
       const innerX = x + padding;
       const innerY = y + padding;
       const innerW = CARD_W - 2 * padding;
       const innerH = CARD_H - 2 * padding;
-    
+
       // --- Header ---
       let curY = y + CARD_H - padding - HEADER_SIZE;
-      page.drawText(addr || "", {x: innerX, y: curY, size: HEADER_SIZE, font: fontSmall});
-      if (addr) curY -= HEADER_SIZE * LINE_SPACING;
+      if (addr) {
+        page.drawText(addr, {x: innerX, y: curY, size: HEADER_SIZE, font: fontSmall});
+        curY -= HEADER_SIZE * LINE_SPACING;
+      }
       if (unit) {
         page.drawText("Unit " + unit, {x: innerX, y: curY, size: HEADER_SIZE, font: fontSmall});
         curY -= HEADER_SIZE * LINE_SPACING;
       }
-    
+
       // --- Names area ---
       const namesAreaTop = curY - 2;
       const namesAreaHeight = namesAreaTop - innerY;
       if (namesAreaHeight <= 0) return;
-    
-      // Fit font
+
+      // Fit font size
       let chosenSize = BODY_SIZE_MIN, lineH = BODY_SIZE_MIN * LINE_SPACING;
       for (let size = BODY_SIZE_DEFAULT; size >= BODY_SIZE_MIN; size--) {
         const testLineH = size * LINE_SPACING;
@@ -271,12 +273,11 @@
           break;
         }
       }
-    
+
       // Draw names
       let drawY = namesAreaTop - (lineH - chosenSize) / 2;
       for (const n of names) {
         if (drawY - chosenSize < innerY) break;
-        // truncate if too wide
         let text = n;
         while (fontBig.widthOfTextAtSize(text, chosenSize) > innerW && text.length > 2) {
           text = text.slice(0, -1);
@@ -285,7 +286,6 @@
         drawY -= lineH;
       }
     }
- 
 
     function download(data, filename, type) {
       const blob = new Blob([data], {type});
