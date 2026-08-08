@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <title>Name Card Generator</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
@@ -15,7 +16,7 @@
     }
     h1 { font-size: 1.5rem; margin-bottom: 0.75rem; }
     p { margin-bottom: 1rem; }
-    input[type="file"], button {
+    input[type="file"], #generateBtn {
       display: block;
       width: 100%;
       max-width: 300px;
@@ -25,20 +26,122 @@
       border-radius: 6px;
       border: 1px solid #ccc;
     }
-    button {
+    #generateBtn {
       background-color: #007acc;
       color: white;
       border: none;
       cursor: pointer;
     }
-    button:hover { background-color: #005ea0; }
+    #generateBtn:hover:not(:disabled) { background-color: #005ea0; }
+    #generateBtn:disabled { background-color: #9cc7e3; cursor: not-allowed; }
+    #setupPanel {
+      margin: 1rem 0;
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+    .field-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.5rem 0;
+    }
+    .field-row label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.9rem;
+    }
+    select, #splitSepCustom {
+      padding: 0.35rem;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: white;
+    }
+    #splitSepCustom { width: 4rem; }
+    .small-btn {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.85rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #f7f7f7;
+      cursor: pointer;
+    }
+    .small-btn:hover { background: #eee; }
+    details { margin: 0.5rem 0; }
+    summary { cursor: pointer; font-size: 0.9rem; color: #333; }
+    .table-scroll { overflow-x: auto; max-width: 100%; margin-top: 0.5rem; }
+    table { border-collapse: collapse; font-size: 0.85rem; }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 0.25rem 0.5rem;
+      text-align: left;
+      white-space: nowrap;
+      max-width: 14rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    th { background: #f2f2f2; }
+    .badge {
+      display: inline-block;
+      background: #007acc;
+      color: #fff;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      padding: 0.1rem 0.35rem;
+      margin-left: 0.3rem;
+      vertical-align: middle;
+    }
+    .muted { color: #666; font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <h1>Apartment Name Card Generator</h1>
-  <p>To get started, click "Choose File" and select a .csv file. Once selected, click "Generate PDF" and your name cards will download.</p>
-  <input type="file" id="csvFile" accept=".csv" />
-  <button onclick="generatePDF()">Generate PDF</button>
+  <p>Choose a .csv or .xlsx file, check the column mapping and preview below, then click "Generate PDF" and your name cards will download.</p>
+  <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" />
+
+  <div id="setupPanel" hidden>
+    <div class="field-row">
+      <label>Header row:
+        <select id="headerRowSelect">
+          <option value="0">Row 1</option>
+          <option value="1">Row 2</option>
+          <option value="-1">No header row</option>
+        </select>
+      </label>
+    </div>
+    <div class="field-row">
+      <label>Address <select id="mapAddress"></select></label>
+      <label>Unit <select id="mapUnit"></select></label>
+      <label>First name <select id="mapFirst"></select></label>
+      <label>Last name <select id="mapLast"></select></label>
+    </div>
+    <details id="splitPanel">
+      <summary>Split a column (e.g. full name into first/last)</summary>
+      <div class="field-row">
+        <label>Column <select id="splitColumn"></select></label>
+        <label>on
+          <select id="splitSep">
+            <option value=" ">space</option>
+            <option value=",">comma</option>
+            <option value=";">semicolon</option>
+            <option value="-">dash</option>
+            <option value="custom">custom&hellip;</option>
+          </select>
+        </label>
+        <input id="splitSepCustom" type="text" hidden />
+        <button type="button" id="splitBtn" class="small-btn">Split</button>
+        <button type="button" id="resetColsBtn" class="small-btn">Reset columns</button>
+      </div>
+    </details>
+    <div class="table-scroll"><table id="previewTable"></table></div>
+    <p id="previewNote" class="muted"></p>
+  </div>
+
+  <button id="generateBtn" onclick="generatePDF()" disabled>Generate PDF</button>
+  <div id="statusMsg" class="muted"></div>
 
   <script>
     const inch = 72;
@@ -55,6 +158,20 @@
     const gutter_y = (avail_h - total_cards_h) / (ROWS - 1);
     const GRID_LEFT = LM + Math.max(0, (avail_w - (total_cards_w + gutter_x*(COLS-1))) / 2);
     const GRID_TOP = PAGE_H - TM - Math.max(0, (avail_h - (total_cards_h + gutter_y*(ROWS-1))) / 2);
+
+    // --- Table state (populated when a file is selected) ---
+    const FIELDS = [
+      { key: "address",   label: "address",    badge: "Address", selectId: "mapAddress", required: true },
+      { key: "unit",      label: "unit",       badge: "Unit",    selectId: "mapUnit",    required: false },
+      { key: "firstname", label: "first name", badge: "First",   selectId: "mapFirst",   required: true },
+      { key: "lastname",  label: "last name",  badge: "Last",    selectId: "mapLast",    required: true },
+    ];
+    const PREVIEW_ROWS = 10;
+    let rawRows = null;       // parsed file, array of arrays (source of truth)
+    let headerRowIndex = 0;   // 0-based index of the header row; -1 = no header
+    let headers = [];         // header strings (splits append to this)
+    let rows = [];            // data rows as arrays (splits append cells)
+    let mapping = { address: null, unit: null, firstname: null, lastname: null }; // column indices
 
     function cardOrigin(col, row) {
       const x = GRID_LEFT + col * (CARD_W + gutter_x);
@@ -94,17 +211,20 @@
     }
 
     function normalizeHeaderName(name) {
-      return name.toLowerCase().replace(/[^a-z]/g, "");
+      return String(name ?? "").toLowerCase().replace(/[^a-z]/g, "");
     }
 
     function findColumnMapping(headers) {
       const mapping = {};
-      const normHeaders = headers.map(h => [h, normalizeHeaderName(h)]);
+      const normHeaders = headers.map((h, i) => [i, normalizeHeaderName(h)]);
 
       function match(targets) {
-        for (const [orig, norm] of normHeaders) {
+        for (const [idx, norm] of normHeaders) {
+          if (!norm) continue;
           for (const t of targets) {
-            if (norm.includes(t) || t.includes(norm)) return orig;
+            // Reverse match needs >= 3 chars so stray short values ("a", "no")
+            // can't claim a field.
+            if (norm.includes(t) || (norm.length >= 3 && t.includes(norm))) return idx;
           }
         }
         return null;
@@ -117,108 +237,345 @@
       return mapping;
     }
 
-    async function generatePDF() {
-      const file = document.getElementById("csvFile").files[0];
-      if (!file) { alert("Upload a CSV first!"); return; }
+    function countFieldMatches(row) {
+      const m = findColumnMapping(row.map(h => String(h ?? "")));
+      return Object.values(m).filter(v => v != null).length;
+    }
 
-      Papa.parse(file, {
-        header: false,
-        skipEmptyLines: true,
-        complete: async function(results) {
-          let rows = results.data;
-          if (rows.length < 2) {
-            alert("CSV looks empty or malformed."); return;
-          }
-
-          // Detect header row
-          const firstRow = rows[0].map(x => String(x).toLowerCase());
-          const hasFirstName = firstRow.some(col => col.includes("first"));
-          let headers, dataRows;
-          if (hasFirstName) {
-            headers = rows[0];
-            dataRows = rows.slice(1);
-          } else {
-            headers = rows[1];
-            dataRows = rows.slice(2);
-          }
-
-          // Fuzzy match headers
-          const cols = findColumnMapping(headers);
-          if (!cols.address || !cols.unit || !cols.firstname || !cols.lastname) {
-            alert("CSV must have columns for address, unit, first name, last name (or close variants).");
-            return;
-          }
-
-          // Build row objects
-          const data = dataRows.map(r => {
-            const obj = {};
-            headers.forEach((h, i) => { obj[h] = r[i]; });
-            return obj;
-          });
-
-          // Group rows
-          const groups = {};
-          for (const row of data) {
-            const addr = (row[cols.address] || "").trim();
-            const aptNum = extractApartmentNumber(row[cols.unit] || "");
-            const first = normalizeNameCase(removeDupSuffix(row[cols.firstname] || ""));
-            const last = normalizeNameCase(removeDupSuffix(row[cols.lastname] || ""));
-            if (!first && !last) continue;
-
-            const name = last && first ? `${last}, ${first}` : (last || first);
-            const key = `${addr}||${aptNum}`;
-            if (!groups[key]) groups[key] = { addr, aptNum, names: new Set() };
-            groups[key].names.add(name);
-          }
-
-          // Build card list
-          let cards = Object.values(groups).map(g => {
-            const sortedNames = Array.from(g.names).sort((a,b) => {
-              const [lastA] = a.split(",");
-              const [lastB] = b.split(",");
-              return lastA.trim().toLowerCase().localeCompare(lastB.trim().toLowerCase()) || a.localeCompare(b);
-            });
-            return { addr: g.addr, aptNum: g.aptNum, names: sortedNames };
-          });
-
-          // Sort cards
-          cards.sort((a,b) => {
-            const addrCmp = a.addr.toLowerCase().localeCompare(b.addr.toLowerCase());
-            if (addrCmp !== 0) return addrCmp;
-            const aNum = parseInt(a.aptNum) || Infinity;
-            const bNum = parseInt(b.aptNum) || Infinity;
-            if (aNum !== bNum) return aNum - bNum;
-            return a.aptNum.localeCompare(b.aptNum);
-          });
-
-          // Make PDF
-          const { PDFDocument, StandardFonts } = PDFLib;
-          const pdfDoc = await PDFDocument.create();
-          const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-          const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-          let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
-          drawCutMarks(page);
-
-          let col = 0, row = 0;
-          for (const card of cards) {
-            const [x, y] = cardOrigin(col, row);
-            drawCard(page, helvetica, helveticaBold, x, y, card.addr, card.aptNum, card.names);
-            col++;
-            if (col >= COLS) {
-              col = 0; row++;
-              if (row >= ROWS) {
-                page = pdfDoc.addPage([PAGE_W, PAGE_H]);
-                drawCutMarks(page);
-                row = 0;
-              }
-            }
-          }
-
-          const pdfBytes = await pdfDoc.save();
-          download(pdfBytes, "name_cards.pdf", "application/pdf");
+    // Structural fallback when no known column names are found: row 0 is
+    // header-shaped if some column is mostly numeric in the data rows while
+    // row 0's cell there is digit-free text.
+    function looksLikeHeader(rows) {
+      if (rows.length < 2) return false;
+      const dataRows = rows.slice(1);
+      for (let j = 0; j < rows[0].length; j++) {
+        const head = String(rows[0][j] ?? "").trim();
+        if (!head || /\d/.test(head)) continue;
+        let withDigits = 0, nonEmpty = 0;
+        for (const r of dataRows) {
+          const v = String(r[j] ?? "").trim();
+          if (!v) continue;
+          nonEmpty++;
+          if (/\d/.test(v)) withDigits++;
         }
+        if (nonEmpty > 0 && withDigits / nonEmpty >= 0.5) return true;
+      }
+      return false;
+    }
+
+    // Decide where the headers are: 0 (row 1), 1 (row 2, e.g. below a title
+    // banner), or -1 (no header row). Keyword scores come from the same fuzzy
+    // matcher used for the column mapping, so any header it can map counts.
+    function detectHeaderRow(rows) {
+      const s0 = countFieldMatches(rows[0]);
+      const s1 = rows.length > 2 ? countFieldMatches(rows[1]) : 0;
+      if (s1 > s0 && s1 >= 2) return 1;
+      if (s0 >= 1) return 0;
+      return looksLikeHeader(rows) ? 0 : -1;
+    }
+
+    // --- File loading ---
+    function onFileSelected() {
+      const file = document.getElementById("csvFile").files[0];
+      if (!file) return;
+      setStatus("");
+      const name = file.name.toLowerCase();
+      if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          try {
+            const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            loadRows(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false, blankrows: false }));
+          } catch (err) {
+            failLoad("Could not read the Excel file: " + err.message);
+          }
+        };
+        reader.onerror = () => failLoad("Could not read the file.");
+        reader.readAsArrayBuffer(file);
+      } else {
+        Papa.parse(file, {
+          header: false,
+          skipEmptyLines: true,
+          complete: results => loadRows(results.data),
+          error: err => failLoad("Could not read the CSV file: " + err.message),
+        });
+      }
+    }
+
+    function loadRows(data) {
+      if (!data || data.length === 0) {
+        failLoad("The file looks empty or malformed.");
+        return;
+      }
+      rawRows = data;
+      headerRowIndex = detectHeaderRow(rawRows);
+      document.getElementById("headerRowSelect").value = String(headerRowIndex);
+      deriveTable();
+    }
+
+    function failLoad(msg) {
+      rawRows = null;
+      headers = [];
+      rows = [];
+      mapping = { address: null, unit: null, firstname: null, lastname: null };
+      document.getElementById("setupPanel").hidden = true;
+      document.getElementById("generateBtn").disabled = true;
+      setStatus(msg);
+    }
+
+    // Rebuild headers/rows/mapping from rawRows. Rows are copied so column
+    // splits never touch the original data ("Reset columns" relies on this).
+    function deriveTable() {
+      if (!rawRows || rawRows.length === 0) return;
+      if (headerRowIndex === -1) {
+        const width = Math.max(...rawRows.map(r => r.length));
+        headers = Array.from({ length: width }, (_, i) => "Column " + (i + 1));
+        rows = rawRows.map(r => r.slice());
+      } else {
+        headers = rawRows[headerRowIndex].map(h => String(h ?? ""));
+        rows = rawRows.slice(headerRowIndex + 1).map(r => r.slice());
+      }
+      mapping = findColumnMapping(headers);
+      renderAll();
+    }
+
+    // --- UI rendering ---
+    function renderAll() {
+      document.getElementById("setupPanel").hidden = false;
+      document.querySelector('#headerRowSelect option[value="1"]').disabled = rawRows.length < 2;
+      renderMappingUI();
+      renderSplitUI();
+      renderPreview();
+      updateGenerateState();
+    }
+
+    function columnLabel(i) {
+      return headers[i] || "(column " + (i + 1) + ")";
+    }
+
+    function renderMappingUI() {
+      for (const f of FIELDS) {
+        const sel = document.getElementById(f.selectId);
+        sel.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = f.required ? "— select column —" : "(none)";
+        sel.appendChild(placeholder);
+        headers.forEach((h, i) => {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = columnLabel(i);
+          sel.appendChild(opt);
+        });
+        sel.value = mapping[f.key] != null ? String(mapping[f.key]) : "";
+      }
+    }
+
+    function onMappingChange() {
+      for (const f of FIELDS) {
+        const v = document.getElementById(f.selectId).value;
+        mapping[f.key] = v === "" ? null : parseInt(v, 10);
+      }
+      renderPreview();
+      updateGenerateState();
+    }
+
+    function renderPreview() {
+      const table = document.getElementById("previewTable");
+      table.innerHTML = "";
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      headers.forEach((h, i) => {
+        const th = document.createElement("th");
+        th.textContent = columnLabel(i);
+        for (const f of FIELDS) {
+          if (mapping[f.key] === i) {
+            const b = document.createElement("span");
+            b.className = "badge";
+            b.textContent = f.badge;
+            th.appendChild(b);
+          }
+        }
+        trh.appendChild(th);
       });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const row of rows.slice(0, PREVIEW_ROWS)) {
+        const tr = document.createElement("tr");
+        headers.forEach((_, i) => {
+          const td = document.createElement("td");
+          td.textContent = String(row[i] ?? "");
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+
+      const note = document.getElementById("previewNote");
+      note.textContent = rows.length > PREVIEW_ROWS
+        ? "Showing " + PREVIEW_ROWS + " of " + rows.length + " rows"
+        : rows.length + (rows.length === 1 ? " row" : " rows");
+    }
+
+    function renderSplitUI() {
+      const sel = document.getElementById("splitColumn");
+      const prev = sel.value;
+      sel.innerHTML = "";
+      headers.forEach((h, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = columnLabel(i);
+        sel.appendChild(opt);
+      });
+      if (prev !== "" && parseInt(prev, 10) < headers.length) sel.value = prev;
+    }
+
+    // Split on the first occurrence of the separator into two new columns
+    // appended on the right; the original column is kept. Appending means
+    // existing column indices don't shift, so the current mapping survives.
+    function applySplit() {
+      const colVal = document.getElementById("splitColumn").value;
+      if (colVal === "") return;
+      const c = parseInt(colVal, 10);
+      let sep = document.getElementById("splitSep").value;
+      if (sep === "custom") sep = document.getElementById("splitSepCustom").value;
+      if (!sep) {
+        setStatus("Enter a separator to split on.");
+        return;
+      }
+      const base = columnLabel(c);
+      headers.push(base + " (1)", base + " (2)");
+      for (const row of rows) {
+        const v = String(row[c] ?? "");
+        const i = v.indexOf(sep);
+        if (i === -1) {
+          row.push(v.trim(), "");
+        } else {
+          row.push(v.slice(0, i).trim(), v.slice(i + sep.length).trim());
+        }
+      }
+      setStatus("");
+      renderMappingUI();
+      renderSplitUI();
+      renderPreview();
+      updateGenerateState();
+    }
+
+    function resetColumns() {
+      deriveTable();
+    }
+
+    function setStatus(msg) {
+      document.getElementById("statusMsg").textContent = msg;
+    }
+
+    function missingFields() {
+      return FIELDS.filter(f => f.required && mapping[f.key] == null);
+    }
+
+    function updateGenerateState() {
+      const btn = document.getElementById("generateBtn");
+      if (!rows.length) {
+        btn.disabled = true;
+        setStatus(rawRows ? "No data rows found in the file." : "");
+        return;
+      }
+      const missing = missingFields();
+      if (missing.length) {
+        btn.disabled = true;
+        setStatus("Select a column for: " + missing.map(f => f.label).join(", "));
+      } else {
+        btn.disabled = false;
+        setStatus("");
+      }
+    }
+
+    // --- Card building + PDF ---
+    function buildCards(rows, mapping) {
+      // Group rows by address + apartment number
+      const groups = {};
+      for (const row of rows) {
+        const addr = String(row[mapping.address] ?? "").trim();
+        const unitVal = mapping.unit != null ? String(row[mapping.unit] ?? "") : "";
+        const aptNum = extractApartmentNumber(unitVal);
+        const first = normalizeNameCase(removeDupSuffix(String(row[mapping.firstname] ?? "")));
+        const last = normalizeNameCase(removeDupSuffix(String(row[mapping.lastname] ?? "")));
+        if (!first && !last) continue;
+
+        const name = last && first ? `${last}, ${first}` : (last || first);
+        const key = `${addr}||${aptNum}`;
+        if (!groups[key]) groups[key] = { addr, aptNum, names: new Set() };
+        groups[key].names.add(name);
+      }
+
+      // Build card list
+      let cards = Object.values(groups).map(g => {
+        const sortedNames = Array.from(g.names).sort((a,b) => {
+          const [lastA] = a.split(",");
+          const [lastB] = b.split(",");
+          return lastA.trim().toLowerCase().localeCompare(lastB.trim().toLowerCase()) || a.localeCompare(b);
+        });
+        return { addr: g.addr, aptNum: g.aptNum, names: sortedNames };
+      });
+
+      // Sort cards
+      cards.sort((a,b) => {
+        const addrCmp = a.addr.toLowerCase().localeCompare(b.addr.toLowerCase());
+        if (addrCmp !== 0) return addrCmp;
+        const aNum = parseInt(a.aptNum) || Infinity;
+        const bNum = parseInt(b.aptNum) || Infinity;
+        if (aNum !== bNum) return aNum - bNum;
+        return a.aptNum.localeCompare(b.aptNum);
+      });
+
+      return cards;
+    }
+
+    async function generatePDF() {
+      if (!rows.length) {
+        setStatus("Choose a file first.");
+        return;
+      }
+      const missing = missingFields();
+      if (missing.length) {
+        setStatus("Select a column for: " + missing.map(f => f.label).join(", "));
+        return;
+      }
+
+      const cards = buildCards(rows, mapping);
+      if (!cards.length) {
+        setStatus("No rows with names found — check the column mapping.");
+        return;
+      }
+
+      const { PDFDocument, StandardFonts } = PDFLib;
+      const pdfDoc = await PDFDocument.create();
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+      drawCutMarks(page);
+
+      let col = 0, row = 0;
+      for (const card of cards) {
+        const [x, y] = cardOrigin(col, row);
+        drawCard(page, helvetica, helveticaBold, x, y, card.addr, card.aptNum, card.names);
+        col++;
+        if (col >= COLS) {
+          col = 0; row++;
+          if (row >= ROWS) {
+            page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+            drawCutMarks(page);
+            row = 0;
+          }
+        }
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      download(pdfBytes, "name_cards.pdf", "application/pdf");
     }
 
     function drawCutMarks(page) {
@@ -296,7 +653,21 @@
       a.click();
       URL.revokeObjectURL(url);
     }
+
+    // --- Event wiring ---
+    document.getElementById("csvFile").addEventListener("change", onFileSelected);
+    document.getElementById("headerRowSelect").addEventListener("change", e => {
+      headerRowIndex = parseInt(e.target.value, 10);
+      deriveTable();
+    });
+    for (const f of FIELDS) {
+      document.getElementById(f.selectId).addEventListener("change", onMappingChange);
+    }
+    document.getElementById("splitSep").addEventListener("change", e => {
+      document.getElementById("splitSepCustom").hidden = e.target.value !== "custom";
+    });
+    document.getElementById("splitBtn").addEventListener("click", applySplit);
+    document.getElementById("resetColsBtn").addEventListener("click", resetColumns);
   </script>
 </body>
 </html>
-
