@@ -10,7 +10,9 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      margin: 1rem;
+      max-width: 56rem;
+      margin: 1rem auto;
+      padding: 0 1rem;
       line-height: 1.4;
       font-size: 16px;
     }
@@ -34,11 +36,41 @@
     }
     #generateBtn:hover:not(:disabled) { background-color: #005ea0; }
     #generateBtn:disabled { background-color: #9cc7e3; cursor: not-allowed; }
-    #setupPanel {
+    .step {
       margin: 1rem 0;
-      padding: 0.75rem;
+      padding: 0.75rem 1rem;
       border: 1px solid #ddd;
       border-radius: 8px;
+    }
+    .step h2 {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.1rem;
+      margin: 0 0 0.25rem;
+    }
+    .step-num {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 50%;
+      background: #007acc;
+      color: #fff;
+      font-size: 0.95rem;
+    }
+    .step-desc {
+      color: #555;
+      font-size: 0.9rem;
+      margin: 0 0 0.75rem;
+    }
+    .waiting-note {
+      color: #999;
+      font-style: italic;
+      font-size: 0.9rem;
+      margin: 0;
     }
     .field-row {
       display: flex;
@@ -79,69 +111,104 @@
       padding: 0.25rem 0.5rem;
       text-align: left;
       white-space: nowrap;
+    }
+    td {
       max-width: 14rem;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     th { background: #f2f2f2; }
+    .th-inner {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      max-width: 14rem;
+    }
+    .th-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .badge {
+      flex: 0 0 auto;
       display: inline-block;
       background: #007acc;
       color: #fff;
       border-radius: 4px;
       font-size: 0.7rem;
       padding: 0.1rem 0.35rem;
-      margin-left: 0.3rem;
-      vertical-align: middle;
     }
     .muted { color: #666; font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <h1>Apartment Name Card Generator</h1>
-  <p>Choose a .csv or .xlsx file, check the column mapping and preview below, then click "Generate PDF" and your name cards will download.</p>
-  <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" />
+  <p>This tool turns a spreadsheet of residents into printable mail box name cards. Follow the four steps below.</p>
 
-  <div id="setupPanel" hidden>
-    <div class="field-row">
-      <label>Header row:
-        <select id="headerRowSelect">
-          <option value="0">Row 1</option>
-          <option value="1">Row 2</option>
-          <option value="-1">No header row</option>
-        </select>
-      </label>
+  <section class="step">
+    <h2><span class="step-num">1</span>Choose your spreadsheet file</h2>
+    <p class="step-desc">Click "Choose File" and pick the file with your resident list. Excel files (.xlsx) and .csv files both work.</p>
+    <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" />
+  </section>
+
+  <section class="step">
+    <h2><span class="step-num">2</span>Are the blue badges in the correct spot?</h2>
+    <p class="step-desc">This table shows what was read from your file. The blue badges show which columns will be used on the cards. If a badge is missing or in the wrong place, fix it in Step 3.</p>
+    <p id="waitPreview" class="waiting-note">The preview will appear here once you choose a file.</p>
+    <div id="previewWrap" hidden>
+      <div class="table-scroll"><table id="previewTable"></table></div>
+      <p id="previewNote" class="muted"></p>
     </div>
-    <div class="field-row">
-      <label>Address <select id="mapAddress"></select></label>
-      <label>Unit <select id="mapUnit"></select></label>
-      <label>First name <select id="mapFirst"></select></label>
-      <label>Last name <select id="mapLast"></select></label>
-    </div>
-    <details id="splitPanel">
-      <summary>Split a column (e.g. full name into first/last)</summary>
+  </section>
+
+  <section class="step">
+    <h2><span class="step-num">3</span>Fix columns (if needed)</h2>
+    <p class="step-desc">Use the dropdowns below to tell the tool which column holds each piece of information. The badges in Step 2 will move as you change them.</p>
+    <p id="waitControls" class="waiting-note">Waiting for a file &mdash; finish Step 1 first.</p>
+    <div id="setupControls" hidden>
       <div class="field-row">
-        <label>Column <select id="splitColumn"></select></label>
-        <label>on
-          <select id="splitSep">
-            <option value=" ">space</option>
-            <option value=",">comma</option>
-            <option value=";">semicolon</option>
-            <option value="-">dash</option>
-            <option value="custom">custom&hellip;</option>
+        <label>Which row has the column titles?
+          <select id="headerRowSelect">
+            <option value="0">Row 1</option>
+            <option value="1">Row 2</option>
+            <option value="-1">No titles &mdash; the data starts on row 1</option>
           </select>
         </label>
-        <input id="splitSepCustom" type="text" hidden />
-        <button type="button" id="splitBtn" class="small-btn">Split</button>
-        <button type="button" id="resetColsBtn" class="small-btn">Reset columns</button>
       </div>
-    </details>
-    <div class="table-scroll"><table id="previewTable"></table></div>
-    <p id="previewNote" class="muted"></p>
-  </div>
+      <div class="field-row">
+        <label>Address <select id="mapAddress"></select></label>
+        <label>Unit <select id="mapUnit"></select></label>
+        <label>First name <select id="mapFirst"></select></label>
+        <label>Last name <select id="mapLast"></select></label>
+      </div>
+      <details id="splitPanel">
+        <summary>Need to split a column? (for example, one "Name" column into first and last)</summary>
+        <p class="step-desc">Pick the column to split and the character that separates the two parts, then click "Split". Two new columns will be added, and you can select them in the boxes above.</p>
+        <div class="field-row">
+          <label>Column <select id="splitColumn"></select></label>
+          <label>Split on
+            <select id="splitSep">
+              <option value=" ">space</option>
+              <option value=",">comma</option>
+              <option value=";">semicolon</option>
+              <option value="-">dash</option>
+              <option value="custom">custom&hellip;</option>
+            </select>
+          </label>
+          <input id="splitSepCustom" type="text" hidden />
+          <button type="button" id="splitBtn" class="small-btn">Split</button>
+          <button type="button" id="resetColsBtn" class="small-btn">Reset columns</button>
+        </div>
+      </details>
+    </div>
+  </section>
 
-  <button id="generateBtn" onclick="generatePDF()" disabled>Generate PDF</button>
-  <div id="statusMsg" class="muted"></div>
+  <section class="step">
+    <h2><span class="step-num">4</span>Create your name cards</h2>
+    <p class="step-desc">Click the blue button. A PDF file called "name_cards.pdf" will be saved to your Downloads folder. Print it and cut along the gray lines.</p>
+    <button id="generateBtn" onclick="generatePDF()" disabled>Generate PDF</button>
+    <div id="statusMsg" class="muted"></div>
+  </section>
 
   <script>
     const inch = 72;
@@ -319,7 +386,7 @@
       headers = [];
       rows = [];
       mapping = { address: null, unit: null, firstname: null, lastname: null };
-      document.getElementById("setupPanel").hidden = true;
+      setSectionsVisible(false);
       document.getElementById("generateBtn").disabled = true;
       setStatus(msg);
     }
@@ -341,8 +408,15 @@
     }
 
     // --- UI rendering ---
+    function setSectionsVisible(visible) {
+      document.getElementById("setupControls").hidden = !visible;
+      document.getElementById("previewWrap").hidden = !visible;
+      document.getElementById("waitPreview").hidden = visible;
+      document.getElementById("waitControls").hidden = visible;
+    }
+
     function renderAll() {
-      document.getElementById("setupPanel").hidden = false;
+      setSectionsVisible(true);
       document.querySelector('#headerRowSelect option[value="1"]').disabled = rawRows.length < 2;
       renderMappingUI();
       renderSplitUI();
@@ -388,15 +462,22 @@
       const trh = document.createElement("tr");
       headers.forEach((h, i) => {
         const th = document.createElement("th");
-        th.textContent = columnLabel(i);
+        const inner = document.createElement("div");
+        inner.className = "th-inner";
+        const name = document.createElement("span");
+        name.className = "th-name";
+        name.textContent = columnLabel(i);
+        name.title = columnLabel(i); // full name on hover when clipped
+        inner.appendChild(name);
         for (const f of FIELDS) {
           if (mapping[f.key] === i) {
             const b = document.createElement("span");
             b.className = "badge";
             b.textContent = f.badge;
-            th.appendChild(b);
+            inner.appendChild(b);
           }
         }
+        th.appendChild(inner);
         trh.appendChild(th);
       });
       thead.appendChild(trh);
