@@ -139,6 +139,14 @@
       padding: 0.1rem 0.35rem;
     }
     .muted { color: #666; font-size: 0.85rem; }
+    dialog {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem;
+      max-width: 26rem;
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+    dialog h3 { margin: 0 0 0.25rem; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -156,10 +164,34 @@
     <p class="step-desc">This table shows what was read from your file. The blue badges show which columns will be used on the cards. If a badge is missing or in the wrong place, fix it in Step 3.</p>
     <p id="waitPreview" class="waiting-note">The preview will appear here once you choose a file.</p>
     <div id="previewWrap" hidden>
+      <div class="field-row">
+        <button type="button" id="sortBtn" class="small-btn">Change the card order&hellip;</button>
+        <span id="sortNote" class="muted"></span>
+      </div>
       <div class="table-scroll"><table id="previewTable"></table></div>
       <p id="previewNote" class="muted"></p>
     </div>
   </section>
+
+  <dialog id="sortDialog">
+    <h3>Change the card order</h3>
+    <p class="step-desc">Choose which column to sort by. The table and the printed cards will follow this order.</p>
+    <div class="field-row">
+      <label>Sort by
+        <select id="sortColumn"></select>
+      </label>
+      <label>Direction
+        <select id="sortDir">
+          <option value="asc">A to Z (smallest first)</option>
+          <option value="desc">Z to A (largest first)</option>
+        </select>
+      </label>
+    </div>
+    <div class="field-row">
+      <button type="button" id="sortApplyBtn" class="small-btn">Sort</button>
+      <button type="button" id="sortCancelBtn" class="small-btn">Cancel</button>
+    </div>
+  </dialog>
 
   <section class="step">
     <h2><span class="step-num">3</span>Fix columns (if needed)</h2>
@@ -239,6 +271,8 @@
     let headers = [];         // header strings (splits append to this)
     let rows = [];            // data rows as arrays (splits append cells)
     let mapping = { address: null, unit: null, firstname: null, lastname: null }; // column indices
+    let sortSpec = null;         // {col, dir} when the user picked a card order
+    let originalRowOrder = null; // snapshot of `rows` for "(original file order)"
 
     function cardOrigin(col, row) {
       const x = GRID_LEFT + col * (CARD_W + gutter_x);
@@ -404,6 +438,8 @@
         rows = rawRows.slice(headerRowIndex + 1).map(r => r.slice());
       }
       mapping = findColumnMapping(headers);
+      sortSpec = null;
+      originalRowOrder = rows.slice();
       renderAll();
     }
 
@@ -421,6 +457,7 @@
       renderMappingUI();
       renderSplitUI();
       renderPreview();
+      updateSortNote();
       updateGenerateState();
     }
 
@@ -549,6 +586,56 @@
       deriveTable();
     }
 
+    // --- Card order (sort) ---
+    function openSortDialog() {
+      const sel = document.getElementById("sortColumn");
+      sel.innerHTML = "";
+      const orig = document.createElement("option");
+      orig.value = "";
+      orig.textContent = "(original file order)";
+      sel.appendChild(orig);
+      headers.forEach((h, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = columnLabel(i);
+        sel.appendChild(opt);
+      });
+      sel.value = sortSpec ? String(sortSpec.col) : "";
+      document.getElementById("sortDir").value = sortSpec ? sortSpec.dir : "asc";
+      document.getElementById("sortDialog").showModal();
+    }
+
+    function applySort() {
+      const v = document.getElementById("sortColumn").value;
+      const dir = document.getElementById("sortDir").value;
+      document.getElementById("sortDialog").close();
+      if (v === "") {
+        sortSpec = null;
+        rows = originalRowOrder.slice();
+      } else {
+        const c = parseInt(v, 10);
+        sortSpec = { col: c, dir };
+        const sign = dir === "desc" ? -1 : 1;
+        rows.sort((a, b) => {
+          const va = String(a[c] ?? "").trim();
+          const vb = String(b[c] ?? "").trim();
+          if (!va && !vb) return 0;
+          if (!va) return 1; // empty cells go last either direction
+          if (!vb) return -1;
+          return sign * va.localeCompare(vb, undefined, { numeric: true, sensitivity: "base" });
+        });
+      }
+      renderPreview();
+      updateSortNote();
+    }
+
+    function updateSortNote() {
+      document.getElementById("sortNote").textContent = sortSpec
+        ? 'Cards will print sorted by "' + columnLabel(sortSpec.col) + '" (' +
+          (sortSpec.dir === "desc" ? "Z to A" : "A to Z") + ")."
+        : "Cards will print in address order.";
+    }
+
     function setStatus(msg) {
       document.getElementById("statusMsg").textContent = msg;
     }
@@ -575,7 +662,9 @@
     }
 
     // --- Card building + PDF ---
-    function buildCards(rows, mapping) {
+    // With preserveOrder, cards keep the first-seen order of the (sorted) rows
+    // instead of the default address/apartment sort.
+    function buildCards(rows, mapping, preserveOrder) {
       // Group rows by address + apartment number
       const groups = {};
       for (const row of rows) {
@@ -602,15 +691,17 @@
         return { addr: g.addr, aptNum: g.aptNum, names: sortedNames };
       });
 
-      // Sort cards
-      cards.sort((a,b) => {
-        const addrCmp = a.addr.toLowerCase().localeCompare(b.addr.toLowerCase());
-        if (addrCmp !== 0) return addrCmp;
-        const aNum = parseInt(a.aptNum) || Infinity;
-        const bNum = parseInt(b.aptNum) || Infinity;
-        if (aNum !== bNum) return aNum - bNum;
-        return a.aptNum.localeCompare(b.aptNum);
-      });
+      // Sort cards (unless the user chose their own row order)
+      if (!preserveOrder) {
+        cards.sort((a,b) => {
+          const addrCmp = a.addr.toLowerCase().localeCompare(b.addr.toLowerCase());
+          if (addrCmp !== 0) return addrCmp;
+          const aNum = parseInt(a.aptNum) || Infinity;
+          const bNum = parseInt(b.aptNum) || Infinity;
+          if (aNum !== bNum) return aNum - bNum;
+          return a.aptNum.localeCompare(b.aptNum);
+        });
+      }
 
       return cards;
     }
@@ -626,7 +717,7 @@
         return;
       }
 
-      const cards = buildCards(rows, mapping);
+      const cards = buildCards(rows, mapping, sortSpec != null);
       if (!cards.length) {
         setStatus("No rows with names found — check the column mapping.");
         return;
@@ -749,6 +840,11 @@
     });
     document.getElementById("splitBtn").addEventListener("click", applySplit);
     document.getElementById("resetColsBtn").addEventListener("click", resetColumns);
+    document.getElementById("sortBtn").addEventListener("click", openSortDialog);
+    document.getElementById("sortApplyBtn").addEventListener("click", applySort);
+    document.getElementById("sortCancelBtn").addEventListener("click", () => {
+      document.getElementById("sortDialog").close();
+    });
   </script>
 </body>
 </html>
